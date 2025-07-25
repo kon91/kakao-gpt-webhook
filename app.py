@@ -1,21 +1,34 @@
 from flask import Flask, request, jsonify
 import openai
 import os
-import json
+import jwt  # PyJWT 필요
+import base64
 
 app = Flask(__name__)
 openai.api_key = os.environ.get("OPENAI_API_KEY")
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    try:
-        # 카카오 요청은 application/x-www-form-urlencoded 형식으로 오며, payload라는 키에 JSON 문자열이 담김
-        raw_payload = request.form['payload']
-        data = json.loads(raw_payload)
+    content_type = request.headers.get("Content-Type")
 
+    if content_type == "application/secevent+jwt":
+        # 🔒 JWT Security Event (user-linked 등)
+        token = request.data.decode("utf-8")
+        try:
+            # 서명 검증 없이 payload만 decode
+            payload = jwt.decode(token, options={"verify_signature": False})
+            print("🔒 Received Security Event Webhook:", payload)
+
+            # 간단 응답
+            return "", 200
+        except Exception as e:
+            return jsonify({"error": f"Invalid JWT: {str(e)}"}), 400
+
+    elif content_type == "application/json":
+        # 🧠 일반 카카오 챗봇 메시지 처리 (GPT)
+        data = request.get_json()
         user_msg = data.get("userRequest", {}).get("utterance", "")
-        
-        # GPT 응답 생성
+
         gpt_response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=[{"role": "user", "content": user_msg}]
@@ -26,14 +39,10 @@ def webhook():
             "version": "2.0",
             "template": {
                 "outputs": [
-                    {
-                        "simpleText": {
-                            "text": reply
-                        }
-                    }
+                    {"simpleText": {"text": reply}}
                 ]
             }
         })
 
-    except Exception as e:
-        return jsonify({"error": str(e)}), 400
+    else:
+        return jsonify({"error": "Unsupported Content-Type"}), 415
